@@ -328,7 +328,9 @@ input[type='color'] { border: 1px solid #cfd8bf; padding: 1px; background: trans
 .lens-options svg { margin-left: auto; color: #819a59; }
 .curation-fields { margin-top: 23px; }
 .curation-fields .field-label { margin-top: 17px; }
-.curation-fields select { display: block; width: 100%; font-size: 11px; margin-top: 9px; letter-spacing: 0; font-weight: 400; }
+.curation-fields select, .curation-fields input[type='number'], .curation-select { display: block; width: 100%; font-size: 11px; margin-top: 9px; letter-spacing: 0; font-weight: 400; }
+.curation-select { margin-bottom: 22px; }
+.curation-range { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .curation-fields textarea { display: block; width: 100%; font-size: 11px; min-height: 70px; margin-top: 9px; letter-spacing: 0; font-weight: 400; line-height: 1.6; }
 .optional { font-size: 7px; color: #a8b294; margin-left: 6px; }
 .consent-check { display: flex; gap: 11px; font-size: 10px; line-height: 1.7; color: #8a9978; margin: 23px 0; }

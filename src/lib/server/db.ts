@@ -25,6 +25,7 @@ export function db() {
     globalDb.autopostDb = connection;
   }
   globalDb.autopostDb.exec('CREATE TABLE IF NOT EXISTS ai_run_links (runId TEXT NOT NULL, usageId TEXT NOT NULL UNIQUE REFERENCES ai_usage(id))');
+  globalDb.autopostDb.exec('CREATE TABLE IF NOT EXISTS ai_runs (id TEXT PRIMARY KEY, projectId TEXT NOT NULL REFERENCES projects(id), limitUsd REAL NOT NULL, createdAt TEXT NOT NULL)');
   return globalDb.autopostDb;
 }
 export class AppError extends Error {

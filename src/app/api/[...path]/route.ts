@@ -2,9 +2,9 @@ import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
 import { AppError, createProject, getAsset, getProject, listProjects, saveProject } from '@/lib/server/db';
 import { assetPath, importPhoto, readUpload, withImportSlot } from '@/lib/server/storage';
-import { documentSchema } from '@/lib/domain';
+import { CURATION_LIMITS, documentSchema } from '@/lib/domain';
 import { exportPost } from '@/lib/server/export';
-import { budgetStatus } from '@/lib/server/ai/budget';
+import { approveRun, budgetStatus } from '@/lib/server/ai/budget';
 import { analyze, cachedAnalysis, curate } from '@/lib/server/ai/curation';
 import { guard } from '@/lib/server/http';
 import { checkConnection } from '@/lib/server/ai/client';
@@ -12,7 +12,7 @@ import { checkConnection } from '@/lib/server/ai/client';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 const json = (value: unknown, status = 200) => Response.json(value, { status, headers: { 'Cache-Control': 'no-store' } });
-const selectionSchema = z.object({ assetIds: z.array(z.uuid()).min(1).max(50), consent: z.literal(true), runId: z.uuid() });
+const selectionSchema = z.object({ assetIds: z.array(z.uuid()).min(1).max(CURATION_LIMITS.photos), consent: z.literal(true), runId: z.uuid(), budgetUsd: z.number().min(0.05).max(CURATION_LIMITS.maxRunUsd).default(0.5) });
 type Context = { params: Promise<{ path: string[] }> };
 
 async function body(request: Request) {
@@ -67,12 +67,14 @@ async function handle(request: Request, context: Context) {
     }
     if (action === 'analysis' && method === 'GET' && parts.length === 3) return json({ ids: getProject(id).assets.filter(a => cachedAnalysis(a.id)).map(a => a.id) });
     if (action === 'analyze' && method === 'POST' && parts.length === 3) {
-      const input = selectionSchema.extend({ assetIds: z.array(z.uuid()).min(1).max(6) }).parse(await body(request));
+      const input = selectionSchema.extend({ assetIds: z.array(z.uuid()).min(1).max(CURATION_LIMITS.analysisBatch) }).parse(await body(request));
+      approveRun(input.runId, id, input.budgetUsd);
       return json(await analyze(id, input.assetIds, input.runId));
     }
     if (action === 'curate' && method === 'POST' && parts.length === 3) {
-      const input = selectionSchema.extend({ lens: z.enum(['Editorial story', 'Color & mood', 'Chronology']), count: z.number().int().min(1).max(5), brief: z.string().max(800), targetId: z.uuid().optional() }).parse(await body(request));
-      return json(await curate(id, input.assetIds, input.lens, input.count, input.brief, input.runId, input.targetId));
+      const input = selectionSchema.extend({ lens: z.enum(['Editorial story', 'Color & mood', 'Chronology']), count: z.number().int().min(1).max(CURATION_LIMITS.posts).nullable(), minSlides: z.number().int().min(1).max(20).default(1), maxSlides: z.number().int().min(1).max(20).default(20), brief: z.string().max(800), targetId: z.uuid().optional() }).refine(value => value.minSlides <= value.maxSlides).parse(await body(request));
+      approveRun(input.runId, id, input.budgetUsd);
+      return json(await curate(id, input.assetIds, input.lens, input.count, input.brief, input.runId, input.targetId, { minSlides: input.minSlides, maxSlides: input.maxSlides }));
     }
     if (action === 'posts' && tail === 'export' && method === 'POST' && parts.length === 5) return exportPost(id, z.uuid().parse(postId));
     throw new AppError('Not found.', 404);

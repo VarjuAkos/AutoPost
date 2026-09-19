@@ -18,10 +18,11 @@ export function describeAIError(error: unknown, stage: 'preflight' | 'generation
   else if (/credit balance|insufficient.*credit|billing|purchase.*credit/i.test(message)) reason = 'Anthropic reports insufficient API credit. Check billing for the API workspace that owns this key; a Claude subscription does not fund API usage.';
   else if (status === 401 || /authentication|invalid.*api.?key/i.test(message)) reason = 'Anthropic could not authenticate. Check ANTHROPIC_API_KEY in your local environment and restart the app.';
   else if (status === 403) reason = 'Anthropic denied access for this API workspace. Check the key’s permissions and account status.';
-  else if (status === 404 || /model.*(not found|not supported|not available|does not exist)/i.test(message)) reason = 'Anthropic could not access the configured Haiku model. Check model availability for this API workspace.';
+  else if (status === 404 || /model.*(not found|not supported|not available|does not exist)/i.test(message)) reason = 'Anthropic could not access the configured AI model. Check model availability for this API workspace.';
   else if (status === 429) reason = 'Anthropic rate-limited this request. Wait before trying again; completed analyses remain cached.';
   else if (code && /CERT|TLS|SSL|SELF_SIGNED|UNABLE_TO_VERIFY/.test(code)) reason = 'The server could not establish a trusted TLS connection to Anthropic. Check your local proxy or certificate configuration; certificate verification remains enabled.';
   else if (/countTokens.*not a function/i.test(message)) reason = 'The installed Anthropic SDK does not expose the token-count operation expected by this app.';
+  else if (/compiled grammar.{0,80}too large|schema.{0,80}too complex/i.test(message)) reason = 'Anthropic rejected the request because the structured-output schema is too complex to compile. This is an app request-format issue, not a problem with your photos. Your cached analyses are kept; repeating the same request will not fix it.';
   else if (/output_config|output_format|json_schema|structured output/i.test(message)) reason = 'Anthropic rejected the structured-output configuration. The app’s request format needs to be checked.';
   else if (status === 400 || status === 422) reason = 'Anthropic rejected the request format. The app’s model and request parameters need to be checked.';
   else if (status === 413) reason = 'Anthropic rejected the request size. Try fewer photos.';

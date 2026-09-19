@@ -12,6 +12,15 @@ it('only exposes provider text in an explicit text-only diagnostic, with credent
   expect(diagnostic.message).toContain('[redacted]');
   for (const secret of [key, 'sk-ant-testcredential', 'another-secret']) expect(diagnostic.message).not.toContain(secret);
 });
+it.each([
+  'The compiled grammar is too large, which would cause performance issues. Simplify your tool schemas or reduce the number of strict tools.',
+  'Schema is too complex for compilation.',
+])('identifies grammar-limit rejections without exposing private provider text: %s', message => {
+  const error = describeAIError({ status: 400, error: { error: { type: 'invalid_request_error', message: `${message} Private photo context: do not expose.` } } }, 'generation', 'The reservation was released.');
+  expect(error.message).toContain('structured-output schema is too complex');
+  expect(error.message).toContain('cached analyses');
+  expect(error.message).not.toContain('Private photo context');
+});
 it('does not expose unexpected local exception messages', () => {
   const error = describeAIError(new Error('Private request body must not be displayed.'), 'generation', 'Billing is uncertain.');
   expect(error.message).not.toContain('Private request body');

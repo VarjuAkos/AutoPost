@@ -35,7 +35,28 @@ describe('AI boundary with a mocked provider', () => {
   it('validates output and settles measured token usage', async () => {
     const before = budgetStatus().used;
     await expect(call()).resolves.toEqual({ data: { answer: 'ok' }, cost: 0.002 });
-    expect(budgetStatus().used - before).toBeCloseTo(0.002);
+    expect(budgetStatus().used - before).toBeCloseTo(0.002, 6);
+    expect(calls.countTokens).toHaveBeenCalledWith(expect.objectContaining({ model: 'claude-haiku-4-5-20251001' }));
+    expect(calls.parse).toHaveBeenCalledWith(expect.objectContaining({ model: 'claude-haiku-4-5-20251001' }));
+  });
+  it('uses Sonnet for both preflight and generation and settles Sonnet prices', async () => {
+    const before = budgetStatus().used;
+    const result = await structuredCall(schema, 'Test.', [{ type: 'text', text: 'Synthetic descriptors.' }], 1000, crypto.randomUUID(), 'claude-sonnet-4-6');
+    expect(result.cost).toBeCloseTo(0.006, 6);
+    expect(budgetStatus().used - before).toBeCloseTo(0.006, 6);
+    expect(calls.countTokens).toHaveBeenCalledWith(expect.objectContaining({ model: 'claude-sonnet-4-6', output_config: expect.any(Object) }));
+    expect(calls.parse).toHaveBeenCalledWith(expect.objectContaining({ model: 'claude-sonnet-4-6' }));
+  });
+  it('retains a Sonnet-priced reservation after an uncertain non-transient failure', async () => {
+    const before = budgetStatus().used;
+    calls.parse.mockRejectedValue(new Error('Uncertain generation.'));
+    await expect(structuredCall(schema, 'Test.', [], 1000, crypto.randomUUID(), 'claude-sonnet-4-6')).rejects.toThrow('conservative reservation');
+    expect(budgetStatus().used - before).toBeCloseTo(0.033, 6);
+    expect(calls.parse).toHaveBeenCalledTimes(1);
+  });
+  it('stops before Sonnet generation if its reservation exceeds the approved cap', async () => {
+    await expect(structuredCall(schema, 'Test.', [], 40000, crypto.randomUUID(), 'claude-sonnet-4-6')).rejects.toThrow('$0.50');
+    expect(calls.parse).not.toHaveBeenCalled();
   });
   it('retains a conservative reservation after uncertain provider failure', async () => {
     const before = budgetStatus().used;
@@ -68,6 +89,16 @@ describe('AI boundary with a mocked provider', () => {
     }));
     await expect(call()).rejects.toThrow('API credit');
     expect(budgetStatus().used).toBe(before);
+  });
+  it('explains oversized grammar, releases its reservation, and never retries the rejected schema', async () => {
+    const before = budgetStatus().used;
+    calls.parse.mockRejectedValue(Object.assign(new Error('Provider rejected generation.'), {
+      status: 400,
+      error: { error: { type: 'invalid_request_error', message: 'The compiled grammar is too large, which would cause performance issues. Simplify your tool schemas or reduce the number of strict tools.' } },
+    }));
+    await expect(call()).rejects.toThrow('structured-output schema is too complex');
+    expect(budgetStatus().used).toBe(before);
+    expect(calls.parse).toHaveBeenCalledTimes(1);
   });
   it('retries one transient 500, reserving the second attempt separately', async () => {
     vi.useFakeTimers();

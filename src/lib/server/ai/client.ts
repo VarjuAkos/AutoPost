@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { z } from 'zod';
 import { AppError } from '../db';
-import { MODEL, reserveBudget, settleBudget, failBudget, rejectBudget } from './budget';
+import { MODEL, tokenCost, reserveBudget, settleBudget, failBudget, rejectBudget, type AIModel } from './budget';
 import { describeAIError, providerStatus } from './errors';
 
 function transientRetryDelay(error: unknown): number | undefined {
@@ -27,7 +27,7 @@ export async function checkConnection() {
   }
 }
 
-export async function structuredCall<T extends z.ZodType>(schema: T, system: string, content: Anthropic.ContentBlockParam[], maxTokens: number, runId: string) {
+export async function structuredCall<T extends z.ZodType>(schema: T, system: string, content: Anthropic.ContentBlockParam[], maxTokens: number, runId: string, model: AIModel = MODEL) {
   if (!process.env.ANTHROPIC_API_KEY) throw new AppError('Set ANTHROPIC_API_KEY in .env or .env.local and restart the app. Never paste keys into chat.', 401);
   const client = new Anthropic({ maxRetries: 0, timeout: 120000 });
   const messages: Anthropic.MessageParam[] = [{ role: 'user', content }];
@@ -38,12 +38,12 @@ export async function structuredCall<T extends z.ZodType>(schema: T, system: str
     let settled = false;
     try {
       const format = zodOutputFormat(schema);
-      const count = await client.messages.countTokens({ model: MODEL, system, messages });
-      const reservation = (count.input_tokens + 5000 + maxTokens * 5) / 1_000_000;
+      const count = await client.messages.countTokens({ model, system, messages, output_config: { format } });
+      const reservation = tokenCost(count.input_tokens + 5000, maxTokens, model);
       reservationId = reserveBudget(reservation, runId);
       stage = 'generation';
-      const message = await client.messages.parse({ model: MODEL, system, messages, max_tokens: maxTokens, output_config: { format } });
-      const cost = settleBudget(reservationId, message.usage.input_tokens, message.usage.output_tokens);
+      const message = await client.messages.parse({ model, system, messages, max_tokens: maxTokens, output_config: { format } });
+      const cost = settleBudget(reservationId, message.usage.input_tokens, message.usage.output_tokens, model);
       settled = true;
       stage = 'validation';
       if (!message.parsed_output) throw new AppError('The model did not return a complete proposal. Your edits are unchanged; generation usage has been recorded.');

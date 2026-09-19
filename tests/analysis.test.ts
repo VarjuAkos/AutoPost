@@ -78,33 +78,66 @@ describe('analysis photo identity', () => {
   });
 });
 
-describe('curation photo references', () => {
-  it('constrains short references and maps a reordered sequence back to real IDs', async () => {
+describe('curation photo assignments', () => {
+  const posts = [{ title: 'A sequence', rationale: 'Contrast.', treatment: 'white' }];
+  const assign = (slots: Record<string, string>) => Object.entries(slots).map(([photoRef, slot]) => ({ photoRef, slot }));
+  it('rules out per-post photo lists and maps explicit references and positions rather than array order', async () => {
     for (const asset of assets) seed(asset, 'Cached');
-    provider.mockImplementation(async (schema: z.ZodType, _system: string, content: Anthropic.ContentBlockParam[]) => {
-      const output = { posts: [{ title: 'A sequence', rationale: 'Contrast.', treatment: 'white', photoRefs: ['photo_2', 'photo_1'] }] };
+    provider.mockImplementation(async (schema: z.ZodType, _system: string, content: Anthropic.ContentBlockParam[], _maxTokens: number, _runId: string, model: string) => {
+      expect(schema.safeParse({ posts: [{ ...posts[0], photoRefs: ['photo_1', 'photo_1'] }] }).success).toBe(false);
+      const output = { posts, assignments: assign({ photo_2: 'post_1_slide_1', photo_1: 'post_1_slide_2' }) };
       expect(schema.safeParse(output).success).toBe(true);
-      expect(schema.safeParse({ posts: [{ ...output.posts[0], photoRefs: ['photo_99'] }] }).success).toBe(false);
+      expect(zodOutputFormat(schema).schema).toMatchObject({ properties: { assignments: { type: 'array', items: { required: ['photoRef', 'slot'], additionalProperties: false, properties: { photoRef: { type: 'string' } } } } } });
+      expect(schema.safeParse({ posts, assignments: assign({ photo_99: 'post_1_slide_1', photo_1: 'unused' }) }).success).toBe(false);
+      expect(model).toBe('claude-sonnet-4-6');
       const text = JSON.stringify(content);
       for (const asset of assets) expect(text).not.toContain(asset.id);
       return { data: output, cost: 0.001 };
     });
     const result = await curate(project.id, assets.map(a => a.id), 'Editorial story', 1, '', runId());
     expect(result.posts[0].slides.map(s => s.assetId)).toEqual([assets[1].id, assets[0].id]);
+    expect(ANALYSIS_VERSION).toBe('claude-haiku-4-5-20251001:editorial-v1');
   });
-  it('preserves pins and framing through the reference mapping', async () => {
+  it('preserves pins and framing through the assignment mapping', async () => {
     for (const asset of assets) seed(asset, 'Cached');
     const post = newPost(assets.map(a => a.id), 0);
     post.slides[0].pinned = true;
     post.slides[0].frame.background = '#101010';
     saveProject(project.id, project.revision, { ...project.document, posts: [post] });
-    provider.mockResolvedValue({ data: { posts: [{ title: 'Refined', rationale: 'A quieter sequence.', treatment: 'white', photoRefs: ['photo_1', 'photo_2'] }] }, cost: 0.001 });
+    provider.mockResolvedValue({ data: { posts, assignments: assign({ photo_1: 'post_1_slide_1', photo_2: 'post_1_slide_2' }) }, cost: 0.001 });
     const result = await curate(project.id, assets.map(a => a.id), 'Editorial story', 1, '', runId(), post.id);
     expect(result.posts[0].slides[0]).toEqual(post.slides[0]);
   });
-  it('rejects invalid references without falling back to positional guessing', async () => {
+  it('keeps unused photos explicit without filling the carousel', async () => {
     for (const asset of assets) seed(asset, 'Cached');
-    provider.mockResolvedValue({ data: { posts: [{ title: 'Invalid', rationale: '', treatment: 'white', photoRefs: ['photo_99'] }] }, cost: 0.001 });
-    await expect(curate(project.id, assets.map(a => a.id), 'Editorial story', 1, '', runId())).rejects.toThrow('photo references');
+    provider.mockResolvedValue({ data: { posts, assignments: assign({ photo_1: 'unused', photo_2: 'post_1_slide_1' }) }, cost: 0.001 });
+    const result = await curate(project.id, assets.map(a => a.id), 'Editorial story', 1, '', runId());
+    expect(result.posts[0].slides.map(s => s.assetId)).toEqual([assets[1].id]);
+    expect(result.unusedIds).toEqual([assets[0].id]);
+  });
+  it.each(['unused', 'post_1_slide_2'])('rejects repeated explicit references even when one is %s', async slot => {
+    for (const asset of assets) seed(asset, 'Cached');
+    provider.mockResolvedValue({ data: { posts, assignments: [{ photoRef: 'photo_1', slot: 'post_1_slide_1' }, { photoRef: 'photo_1', slot }] }, cost: 0.001 });
+    await expect(curate(project.id, assets.map(a => a.id), 'Editorial story', 1, '', runId())).rejects.toThrow('same photo more than once');
+    expect(provider).toHaveBeenCalledTimes(1);
+  });
+  it.each<Record<string, string>>([
+    { photo_1: 'post_1_slide_1', photo_2: 'post_1_slide_1' },
+    { photo_1: 'post_1_slide_1', photo_2: 'post_1_slide_21' },
+    { photo_1: 'post_1_slide_1', photo_2: 'post_1_slide_0' },
+    { photo_1: 'post_1_slide_1', photo_2: 'post_1_slide_1.5' },
+    { photo_1: 'post_1_slide_1', photo_2: 'invented-slot' },
+    { photo_1: 'post_1_slide_1', photo_2: 'post_1_slide_2\n' },
+    { photo_1: 'post_1_slide_1', photo_2: 'post_1_slide_3' },
+    { photo_1: 'post_2_slide_1', photo_2: 'post_1_slide_1' },
+    { photo_1: 'post_1_slide_1', photo_2: 'unused', photo_99: 'unused' },
+    { photo_1: 'post_1_slide_1' },
+    { photo_1: 'unused', photo_2: 'unused' },
+  ])('rejects invalid assignments without guessing, retrying, or losing cached analyses: %j', async assignments => {
+    for (const asset of assets) seed(asset, 'Cached');
+    provider.mockResolvedValue({ data: { posts, assignments: assign(assignments) }, cost: 0.001 });
+    await expect(curate(project.id, assets.map(a => a.id), 'Editorial story', 1, '', runId())).rejects.toThrow();
+    expect(provider).toHaveBeenCalledTimes(1);
+    expect(assets.every(asset => cachedAnalysis(asset.id)?.subject === 'Cached')).toBe(true);
   });
 });

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { db } from '../src/lib/server/db';
-import { budgetStatus, failBudget, reserveBudget, settleBudget } from '../src/lib/server/ai/budget';
+import { createProject, db } from '../src/lib/server/db';
+import { approveRun, budgetStatus, failBudget, reserveBudget, settleBudget } from '../src/lib/server/ai/budget';
 import { validateProposal, type Proposal } from '../src/lib/server/ai/curation';
 import { newPost } from '../src/lib/domain';
 
@@ -12,6 +12,29 @@ function rollbackTest(work: () => void) {
 afterEach(() => vi.unstubAllEnvs());
 
 describe('AI spending limits without paid calls', () => {
+  it('honors an explicitly approved allowance and prevents changing it during resume', () => {
+    vi.stubEnv('AUTOPOST_AI_LIMIT_USD', '100');
+    rollbackTest(() => {
+      const project = createProject('Run approval');
+      const run = crypto.randomUUID();
+      approveRun(run, project.id, 1);
+      reserveBudget(0.6, run);
+      expect(() => approveRun(run, project.id, 1)).not.toThrow();
+      expect(() => approveRun(run, project.id, 2)).toThrow('new run');
+      expect(() => reserveBudget(0.5, run)).toThrow('$1.00');
+    });
+  });
+  it('keeps approved runs project-scoped and below the global allowance', () => {
+    rollbackTest(() => {
+      vi.stubEnv('AUTOPOST_AI_LIMIT_USD', '1');
+      const project = createProject('Scope one');
+      const other = createProject('Scope two');
+      const run = crypto.randomUUID();
+      expect(() => approveRun(run, project.id, 2)).toThrow('total');
+      approveRun(run, project.id, 0.5);
+      expect(() => approveRun(run, other.id, 0.5)).toThrow('another project');
+    });
+  });
   it('separates recorded usage from pending and uncertain reservations', () => {
     vi.stubEnv('AUTOPOST_AI_LIMIT_USD', '100');
     rollbackTest(() => {

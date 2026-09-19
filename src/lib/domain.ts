@@ -30,13 +30,16 @@ export type Asset = { id: string; projectId: string; filename: string; hash: str
 export type Project = { id: string; revision: number; createdAt: string; document: ProjectDocument; assets: Asset[] };
 export type ProjectSummary = { id: string; title: string; count: number; postCount: number; covers: string[]; createdAt: string };
 export type Lens = 'Editorial story' | 'Color & mood' | 'Chronology';
+export const CURATION_LIMITS = { photos: 500, posts: 20, analysisBatch: 6, maxRunUsd: 20 } as const;
+export const curationRangeSchema = z.object({ minSlides: z.number().int().min(1).max(20), maxSlides: z.number().int().min(1).max(20) }).refine(value => value.minSlides <= value.maxSlides, 'Minimum photos cannot exceed maximum photos.');
+export type CurationRange = z.infer<typeof curationRangeSchema>;
 export const assetUrl = (id: string, size: 'thumb' | 'preview' = 'thumb') => `/api/assets/${id}?size=${size}`;
 
 export function newSlide(assetId: string, frame: Frame = defaultFrame): Slide {
   return { id: crypto.randomUUID(), assetId, frame: { ...frame }, pinned: false };
 }
 export function newPost(assetIds: string[], index: number, title = 'Untitled story'): Post {
-  return { id: crypto.randomUUID(), title, rationale: '', status: 'accepted', lens: 'Manual', ratio: '4:5', frame: { ...defaultFrame }, slides: assetIds.slice(0, 20).map(id => newSlide(id)), position: { x: (index % 3) * 360, y: Math.floor(index / 3) * 470 } };
+  return { id: crypto.randomUUID(), title, rationale: '', status: 'accepted', lens: 'Manual', ratio: '4:5', frame: { ...defaultFrame }, slides: assetIds.slice(0, 20).map(id => newSlide(id)), position: { x: (index % 5) * 360, y: Math.floor(index / 5) * 470 } };
 }
 export function reorder<T>(items: T[], from: number, to: number): T[] {
   if (from < 0 || to < 0 || from >= items.length || to >= items.length) return items;

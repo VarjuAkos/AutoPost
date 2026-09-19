@@ -156,6 +156,42 @@ test('resume skips cached photos, preserves the run allowance, and explains held
   await expect(dialog.getByText('7 / 7 photos analyzed and saved.')).toBeVisible();
 });
 
+test('post-generation failure retries only Sonnet composition and keeps cached photo analyses', async ({ page, request }) => {
+  const created = await request.post('/api/projects', { headers: { Origin: origin }, data: { title: 'Cached composition retry' } });
+  const project = await created.json() as Project;
+  project.assets = Array.from({ length: 3 }, (_, i) => ({ id: crypto.randomUUID(), projectId: project.id, filename: `synthetic-${i}.jpg`, hash: `fake-${i}`, width: 600, height: 400, bytes: 100, capturedAt: null, createdAt: new Date().toISOString() }));
+  const ids = project.assets.map(asset => asset.id);
+  const runs: string[] = [];
+  let analyses = 0;
+  await page.route(`**/api/projects/${project.id}`, route => route.fulfill({ json: project }));
+  await page.route('**/api/assets/**', route => route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="60" height="40"/>' }));
+  await page.route('**/api/settings', route => route.fulfill({ json: { configured: true, used: 0, limit: 1, model: 'claude-haiku-4-5-20251001', curationModel: 'claude-sonnet-4-6' } }));
+  await page.route('**/analysis', route => route.fulfill({ json: { ids } }));
+  await page.route('**/analyze', route => { analyses++; return route.fulfill({ status: 500, json: { error: 'Cached photos should never be analyzed again.' } }); });
+  await page.route('**/curate', route => {
+    const input = route.request().postDataJSON();
+    runs.push(input.runId);
+    expect(input.assetIds).toEqual(ids);
+    if (runs.length === 1) return route.fulfill({ status: 400, json: { error: 'AI assigned photos to the same slide position. No proposal was applied; cached analyses are kept. Retry post generation.' } });
+    return route.fulfill({ json: { posts: [{ ...newPost(ids, 0, 'Recovered composition'), status: 'draft' }], consideredCount: 3, selectedCount: 3 } });
+  });
+  await page.goto(`/projects/${project.id}`);
+  await page.getByRole('button', { name: 'Curate with AI', exact: true }).first().click();
+  const dialog = page.getByRole('dialog', { name: 'Find the stories within.' });
+  await expect(dialog.locator('.ai-budget')).toContainText('SONNET 4.6 STORIES');
+  await expect(dialog.getByText('3 / 3 photos analyzed and saved.')).toBeVisible();
+  await dialog.getByRole('checkbox').check();
+  await dialog.getByRole('button', { name: 'Curate my photographs' }).click();
+  await expect(dialog.getByRole('alert')).toContainText('cached analyses are kept');
+  expect(runs).toHaveLength(1);
+  await dialog.getByRole('button', { name: 'Retry post generation' }).click();
+  await expect(dialog.getByText('Ready for your eye.', { exact: false })).toBeVisible();
+  expect(runs).toHaveLength(2);
+  expect(new Set(runs).size).toBe(1);
+  expect(analyses).toBe(0);
+  expect((await (await request.get(`/api/projects/${project.id}`)).json()).document.posts).toHaveLength(0);
+});
+
 test('board nodes initialize, drag without warnings, and save only the final position', async ({ page, request }) => {
   const response = await request.post('/api/projects', { headers: { Origin: origin }, data: { title: `Dragging ${Date.now()}` } });
   const project = await response.json() as Project;
@@ -184,6 +220,56 @@ test('board nodes initialize, drag without warnings, and save only the final pos
   await expect(handle).toBeVisible();
   expect(warnings).toEqual([]);
 });
+
+for (const size of [170, 300]) {
+  test(`curates all ${size} photos in batches with configurable post count and allowance`, async ({ page, request }) => {
+    const created = await request.post('/api/projects', { headers: { Origin: origin }, data: { title: `Large browser collection ${size}` } });
+    const project = await created.json() as Project;
+    project.assets = Array.from({ length: size }, (_, i) => ({ id: crypto.randomUUID(), projectId: project.id, filename: `synthetic-${i}.jpg`, hash: `fake-${i}`, width: 600, height: 400, bytes: 100, capturedAt: null, createdAt: new Date().toISOString() }));
+    const ids = project.assets.map(a => a.id);
+    const cached = new Set(ids.slice(0, 50));
+    const analyzed: string[] = [];
+    const runs = new Set<string>();
+    const desired = size === 170 ? 12 : 2;
+    await page.route(`**/api/projects/${project.id}`, route => route.fulfill({ json: project }));
+    await page.route('**/api/assets/**', route => route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="60" height="40"><rect width="60" height="40" fill="#738a58"/></svg>' }));
+    await page.route('**/api/settings', route => route.fulfill({ json: { configured: true, used: 0, limit: 3, model: 'mock-provider' } }));
+    await page.route(`**/projects/${project.id}/analysis`, route => route.fulfill({ json: { ids: [...cached] } }));
+    await page.route('**/analyze', route => {
+      const input = route.request().postDataJSON();
+      expect(input.assetIds.length).toBeLessThanOrEqual(6);
+      expect(input.budgetUsd).toBe(2);
+      runs.add(input.runId);
+      for (const id of input.assetIds) { expect(cached.has(id)).toBe(false); cached.add(id); analyzed.push(id); }
+      return route.fulfill({ json: { analyzed: input.assetIds.length, cached: 0, cost: 0 } });
+    });
+    await page.route('**/curate', route => {
+      const input = route.request().postDataJSON();
+      expect(input.assetIds).toEqual(ids);
+      expect(input.count).toBe(size === 170 ? 12 : null);
+      expect(input.minSlides).toBe(3);
+      expect(input.maxSlides).toBe(5);
+      expect(input.budgetUsd).toBe(2);
+      runs.add(input.runId);
+      const posts = Array.from({ length: desired }, (_, i) => ({ ...newPost(ids.slice(size - desired * 3 + i * 3, size - desired * 3 + (i + 1) * 3), i, `Highlight ${i + 1}`), status: 'draft' }));
+      return route.fulfill({ json: { posts, cost: 0, consideredCount: size, selectedCount: desired * 3 } });
+    });
+    await page.goto(`/projects/${project.id}`);
+    await page.getByRole('button', { name: 'Curate with AI', exact: true }).first().click();
+    const dialog = page.getByRole('dialog', { name: 'Find the stories within.' });
+    await expect(dialog.getByText(`${size} photographs considered`)).toBeVisible();
+    await expect(dialog.getByLabel('Number of stories')).toHaveValue('auto');
+    if (size === 170) await dialog.getByLabel('Number of stories').selectOption('12');
+    await dialog.getByLabel('Maximum photos per post').fill('5');
+    await dialog.getByLabel('Run allowance in USD').fill('2');
+    await dialog.getByRole('checkbox').check();
+    await dialog.getByRole('button', { name: 'Curate my photographs' }).click();
+    await expect(dialog.getByText('Ready for your eye.', { exact: false })).toBeVisible();
+    expect(analyzed).toEqual(ids.slice(50));
+    expect(runs.size).toBe(1);
+    await expect(dialog.getByText(`${size} considered · ${desired * 3} chosen · ${size - desired * 3} left in the library.`)).toBeVisible();
+  });
+}
 
 test('mutations reject cross-origin and missing-origin requests', async ({ request }) => {
   const cross = await request.post('/api/projects', { headers: { Origin: 'https://example.com' }, data: { title: 'Blocked' } });
