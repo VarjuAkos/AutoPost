@@ -1,0 +1,36 @@
+import { describe, expect, it } from 'vitest';
+import sharp from 'sharp';
+import { readFile } from 'node:fs/promises';
+import { createProject, getProject, saveProject } from '../src/lib/server/db';
+import { assetPath, checksum, importPhoto } from '../src/lib/server/storage';
+import { renderSlide } from '../src/lib/server/images';
+import { defaultFrame } from '../src/lib/domain';
+
+describe('safe media pipeline', () => {
+  it('copies exact source bytes, deduplicates, and exports a framed JPEG', async () => {
+    const project = createProject('Synthetic media test');
+    const original = await sharp({ create: { width: 600, height: 400, channels: 3, background: '#ed5733' } }).jpeg().toBuffer();
+    const { asset } = await importPhoto(project.id, '../../original.jpg', original);
+    expect(asset.filename).toBe('original.jpg');
+    expect(await readFile(assetPath(asset.id, 'original'))).toEqual(original);
+    expect((await importPhoto(project.id, 'copy.jpg', original)).duplicate).toBe(true);
+    const output = await renderSlide(asset, { ...defaultFrame, margin: 0 });
+    const metadata = await sharp(output).metadata();
+    expect(metadata.width).toBe(1080);
+    expect(metadata.height).toBe(1350);
+    expect(metadata.exif).toBeUndefined();
+    expect(checksum(await readFile(assetPath(asset.id, 'original')))).toBe(asset.hash);
+    const { data, info } = await sharp(output).raw().toBuffer({ resolveWithObject: true });
+    expect([...data.subarray(0, 3)]).toEqual([255, 255, 255]);
+    const center = (675 * info.width + 540) * info.channels;
+    expect(data[center]).toBeGreaterThan(220);
+    expect(data[center + 1]).toBeLessThan(100);
+  });
+  it('rejects corrupt input and stale saves', async () => {
+    const project = createProject('Revision test');
+    await expect(importPhoto(project.id, 'broken.jpg', Buffer.from('not an image'))).rejects.toThrow();
+    expect(saveProject(project.id, 0, project.document)).toBe(1);
+    expect(() => saveProject(project.id, 0, project.document)).toThrow('another tab');
+    expect(getProject(project.id).revision).toBe(1);
+  });
+});
