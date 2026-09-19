@@ -26,6 +26,27 @@ describe('safe media pipeline', () => {
     expect(data[center]).toBeGreaterThan(220);
     expect(data[center + 1]).toBeLessThan(100);
   });
+  it('normalizes EXIF rotation before framing and removes private metadata', async () => {
+    const project = createProject('Orientation test');
+    const original = await sharp({ create: { width: 600, height: 400, channels: 3, background: '#326b8c' } }).withMetadata({ orientation: 6 }).jpeg().toBuffer();
+    const { asset } = await importPhoto(project.id, 'rotated.jpg', original);
+    expect([asset.width, asset.height]).toEqual([400, 600]);
+    const preview = await sharp(assetPath(asset.id, 'preview')).metadata();
+    expect([preview.width, preview.height, preview.orientation]).toEqual([400, 600, undefined]);
+    const output = await renderSlide(asset, { ...defaultFrame, mode: 'fill', zoom: 1.5 });
+    expect((await sharp(output).metadata()).exif).toBeUndefined();
+    expect(checksum(await readFile(assetPath(asset.id, 'original')))).toBe(checksum(original));
+  });
+  it('keeps PNG transparency so preview and black-background export agree', async () => {
+    const project = createProject('Transparency test');
+    const original = await sharp({ create: { width: 600, height: 400, channels: 4, background: { r: 255, g: 0, b: 0, alpha: 0 } } }).png().toBuffer();
+    const { asset } = await importPhoto(project.id, 'transparent.png', original);
+    const preview = await sharp(assetPath(asset.id, 'preview', asset.derivativeFormat)).metadata();
+    expect(preview.hasAlpha).toBe(true);
+    const output = await renderSlide(asset, { ...defaultFrame, mode: 'fill', background: '#101010' });
+    const { data } = await sharp(output).raw().toBuffer({ resolveWithObject: true });
+    expect([...data.subarray(0, 3)]).toEqual([16, 16, 16]);
+  });
   it('rejects corrupt input and stale saves', async () => {
     const project = createProject('Revision test');
     await expect(importPhoto(project.id, 'broken.jpg', Buffer.from('not an image'))).rejects.toThrow();

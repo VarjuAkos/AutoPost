@@ -1,16 +1,17 @@
 import path from 'node:path';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
-import sharp from 'sharp';
+import sharp, { type Metadata } from 'sharp';
 import exifr from 'exifr';
 import { AppError, dataRoot, db, getAsset, getProject } from './db';
 import type { Asset } from '../domain';
 
 export const MAX_FILE_BYTES = 50 * 1024 * 1024;
 export const MAX_PIXELS = 100_000_000;
-export function assetPath(id: string, kind: 'original' | 'thumb' | 'preview' | 'analysis') {
+export function assetPath(id: string, kind: 'original' | 'thumb' | 'preview' | 'analysis', format: 'jpeg' | 'png' = 'jpeg') {
   if (!/^[0-9a-f-]{36}$/.test(id)) throw new AppError('Invalid photo ID.');
-  return path.join(dataRoot, 'assets', id, kind === 'original' ? 'original' : `${kind}.jpg`);
+  const extension = kind !== 'analysis' && format === 'png' ? 'png' : 'jpg';
+  return path.join(dataRoot, 'assets', id, kind === 'original' ? 'original' : `${kind}.${extension}`);
 }
 export const checksum = (data: Buffer) => createHash('sha256').update(data).digest('hex');
 export async function readUpload(request: Request) {
@@ -34,7 +35,7 @@ export async function importPhoto(projectId: string, filename: string, bytes: Bu
   const hash = checksum(bytes);
   const existing = db().prepare('SELECT id FROM assets WHERE projectId = ? AND hash = ?').get(projectId, hash) as { id: string } | undefined;
   if (existing) return { asset: getAsset(existing.id), duplicate: true };
-  let metadata: sharp.Metadata;
+  let metadata: Metadata;
   try { metadata = await sharp(bytes, { limitInputPixels: MAX_PIXELS, animated: false }).metadata(); }
   catch { throw new AppError('This file is damaged, unsupported, or exceeds 100 megapixels.'); }
   if (!['jpeg', 'png'].includes(metadata.format || '') || !metadata.width || !metadata.height || (metadata.pages || 1) > 1) throw new AppError('Import a single-frame JPEG or PNG.');
@@ -50,10 +51,13 @@ export async function importPhoto(projectId: string, filename: string, bytes: Bu
   await mkdir(path.dirname(assetPath(id, 'original')), { recursive: true, mode: 0o700 });
   await writeFile(assetPath(id, 'original'), bytes, { flag: 'wx', mode: 0o600 });
   if (checksum(await readFile(assetPath(id, 'original'))) !== hash) throw new AppError('Copy verification failed. Please retry.', 500);
+  const derivativeFormat = metadata.hasAlpha ? 'png' : 'jpeg';
   for (const [kind, size] of [['thumb', 480], ['preview', 1800], ['analysis', 768]] as const) {
-    await sharp(bytes, { limitInputPixels: MAX_PIXELS }).autoOrient().resize(size, size, { fit: 'inside', withoutEnlargement: true }).flatten({ background: '#ffffff' }).withIccProfile('srgb').jpeg({ quality: kind === 'preview' ? 90 : 80 }).toFile(assetPath(id, kind));
+    const pipeline = sharp(bytes, { limitInputPixels: MAX_PIXELS }).autoOrient().resize(size, size, { fit: 'inside', withoutEnlargement: true }).withIccProfile('srgb');
+    if (kind !== 'analysis' && derivativeFormat === 'png') await pipeline.png().toFile(assetPath(id, kind, derivativeFormat));
+    else await pipeline.flatten({ background: '#ffffff' }).jpeg({ quality: kind === 'preview' ? 90 : 80 }).toFile(assetPath(id, kind));
   }
-  const asset: Asset = { id, projectId, hash, filename: path.basename(filename.replaceAll('\\', '/')).slice(0, 200) || 'Untitled photo', width, height, bytes: bytes.length, capturedAt, createdAt: new Date().toISOString() };
+  const asset: Asset = { id, projectId, hash, filename: path.basename(filename.replaceAll('\\', '/')).slice(0, 200) || 'Untitled photo', width, height, bytes: bytes.length, capturedAt, createdAt: new Date().toISOString(), derivativeFormat };
   db().prepare('INSERT INTO assets (id, projectId, hash, metadata) VALUES (?, ?, ?, ?)').run(id, projectId, hash, JSON.stringify(asset));
   return { asset, duplicate: false };
 }

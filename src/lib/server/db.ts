@@ -4,7 +4,11 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { documentSchema, validateDocument, type Asset, type Project, type ProjectDocument, type ProjectSummary } from '../domain';
 
-export const dataRoot = path.resolve(process.env.AUTOPOST_DATA_DIR || path.join(process.cwd(), 'data'));
+export const dataRoot = process.env.AUTOPOST_TEST_SCOPE === 'unit'
+  ? path.join(process.cwd(), '.test-data', 'unit')
+  : process.env.AUTOPOST_TEST_SCOPE === 'browser'
+    ? path.join(process.cwd(), '.test-data', 'browser')
+    : path.join(process.cwd(), 'data');
 const globalDb = globalThis as typeof globalThis & { autopostDb?: Database.Database };
 export function db() {
   if (!globalDb.autopostDb) {
@@ -20,6 +24,7 @@ export function db() {
     `);
     globalDb.autopostDb = connection;
   }
+  globalDb.autopostDb.exec('CREATE TABLE IF NOT EXISTS ai_run_links (runId TEXT NOT NULL, usageId TEXT NOT NULL UNIQUE REFERENCES ai_usage(id))');
   return globalDb.autopostDb;
 }
 export class AppError extends Error {

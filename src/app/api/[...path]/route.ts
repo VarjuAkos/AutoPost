@@ -6,21 +6,15 @@ import { documentSchema } from '@/lib/domain';
 import { exportPost } from '@/lib/server/export';
 import { budgetStatus } from '@/lib/server/ai/budget';
 import { analyze, cachedAnalysis, curate } from '@/lib/server/ai/curation';
+import { guard } from '@/lib/server/http';
+import { checkConnection } from '@/lib/server/ai/client';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 const json = (value: unknown, status = 200) => Response.json(value, { status, headers: { 'Cache-Control': 'no-store' } });
-const selectionSchema = z.object({ assetIds: z.array(z.uuid()).min(1).max(50), consent: z.literal(true) });
+const selectionSchema = z.object({ assetIds: z.array(z.uuid()).min(1).max(50), consent: z.literal(true), runId: z.uuid() });
 type Context = { params: Promise<{ path: string[] }> };
 
-export function guard(request: Request) {
-  const url = new URL(request.url);
-  const host = request.headers.get('host')?.split(':')[0];
-  if (!['127.0.0.1', 'localhost'].includes(host || '')) throw new AppError('This studio is only available on localhost.', 403);
-  const origin = request.headers.get('origin');
-  if (origin && origin !== url.origin) throw new AppError('Cross-origin access is not allowed.', 403);
-  if (!['GET', 'HEAD'].includes(request.method) && !origin) throw new AppError('A same-origin browser request is required.', 403);
-}
 async function body(request: Request) {
   if (!request.body) throw new AppError('Request body required.');
   const reader = request.body.getReader();
@@ -43,10 +37,14 @@ async function handle(request: Request, context: Context) {
     const [resource, id, action, postId, tail] = parts;
     const method = request.method;
     if (resource === 'settings' && method === 'GET' && parts.length === 1) return json(budgetStatus());
+    if (resource === 'settings' && id === 'check' && method === 'POST' && parts.length === 2) {
+      z.object({ consent: z.literal(true) }).parse(await body(request));
+      return json(await checkConnection());
+    }
     if (resource === 'assets' && method === 'GET' && parts.length === 2) {
       const asset = getAsset(z.uuid().parse(id));
       const size = new URL(request.url).searchParams.get('size') === 'preview' ? 'preview' : 'thumb';
-      return new Response(new Uint8Array(await readFile(assetPath(asset.id, size))), { headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=86400', 'X-Content-Type-Options': 'nosniff' } });
+      return new Response(new Uint8Array(await readFile(assetPath(asset.id, size, asset.derivativeFormat))), { headers: { 'Content-Type': `image/${asset.derivativeFormat || 'jpeg'}`, 'Cache-Control': 'private, max-age=86400', 'X-Content-Type-Options': 'nosniff' } });
     }
     if (resource !== 'projects') throw new AppError('Not found.', 404);
     if (parts.length === 1) {
@@ -70,11 +68,11 @@ async function handle(request: Request, context: Context) {
     if (action === 'analysis' && method === 'GET' && parts.length === 3) return json({ ids: getProject(id).assets.filter(a => cachedAnalysis(a.id)).map(a => a.id) });
     if (action === 'analyze' && method === 'POST' && parts.length === 3) {
       const input = selectionSchema.extend({ assetIds: z.array(z.uuid()).min(1).max(6) }).parse(await body(request));
-      return json(await analyze(id, input.assetIds));
+      return json(await analyze(id, input.assetIds, input.runId));
     }
     if (action === 'curate' && method === 'POST' && parts.length === 3) {
       const input = selectionSchema.extend({ lens: z.enum(['Editorial story', 'Color & mood', 'Chronology']), count: z.number().int().min(1).max(5), brief: z.string().max(800), targetId: z.uuid().optional() }).parse(await body(request));
-      return json(await curate(id, input.assetIds, input.lens, input.count, input.brief, input.targetId));
+      return json(await curate(id, input.assetIds, input.lens, input.count, input.brief, input.runId, input.targetId));
     }
     if (action === 'posts' && tail === 'export' && method === 'POST' && parts.length === 5) return exportPost(id, z.uuid().parse(postId));
     throw new AppError('Not found.', 404);

@@ -26,7 +26,7 @@ export const documentSchema = z.object({
   viewport: z.object({ x: z.number().min(-100000).max(100000), y: z.number().min(-100000).max(100000), zoom: z.number().min(0.2).max(2) }),
 });
 export type ProjectDocument = z.infer<typeof documentSchema>;
-export type Asset = { id: string; projectId: string; filename: string; hash: string; width: number; height: number; bytes: number; capturedAt: string | null; createdAt: string };
+export type Asset = { id: string; projectId: string; filename: string; hash: string; width: number; height: number; bytes: number; capturedAt: string | null; createdAt: string; derivativeFormat?: 'jpeg' | 'png' };
 export type Project = { id: string; revision: number; createdAt: string; document: ProjectDocument; assets: Asset[] };
 export type ProjectSummary = { id: string; title: string; count: number; postCount: number; covers: string[]; createdAt: string };
 export type Lens = 'Editorial story' | 'Color & mood' | 'Chronology';
