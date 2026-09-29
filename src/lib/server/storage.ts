@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import sharp, { type Metadata } from 'sharp';
 import exifr from 'exifr';
@@ -29,37 +29,72 @@ export async function readUpload(request: Request) {
   }
   return Buffer.concat(chunks);
 }
-export async function importPhoto(projectId: string, filename: string, bytes: Buffer) {
-  getProject(projectId);
+async function inspect(bytes: Buffer) {
   if (!bytes.length || bytes.length > MAX_FILE_BYTES) throw new AppError('Invalid file size. Maximum is 50 MiB.', 413);
-  const hash = checksum(bytes);
-  const existing = db().prepare('SELECT id FROM assets WHERE projectId = ? AND hash = ?').get(projectId, hash) as { id: string } | undefined;
-  if (existing) return { asset: getAsset(existing.id), duplicate: true };
   let metadata: Metadata;
   try { metadata = await sharp(bytes, { limitInputPixels: MAX_PIXELS, animated: false }).metadata(); }
   catch { throw new AppError('This file is damaged, unsupported, or exceeds 100 megapixels.'); }
   if (!['jpeg', 'png'].includes(metadata.format || '') || !metadata.width || !metadata.height || (metadata.pages || 1) > 1) throw new AppError('Import a single-frame JPEG or PNG.');
   const rotated = (metadata.orientation || 1) > 4;
-  const width = rotated ? metadata.height : metadata.width;
-  const height = rotated ? metadata.width : metadata.height;
   let capturedAt: string | null = null;
   try {
     const exif = await exifr.parse(bytes, ['DateTimeOriginal']);
     if (exif?.DateTimeOriginal instanceof Date && !Number.isNaN(exif.DateTimeOriginal.getTime())) capturedAt = exif.DateTimeOriginal.toISOString();
   } catch { capturedAt = null; }
-  const id = randomUUID();
-  await mkdir(path.dirname(assetPath(id, 'original')), { recursive: true, mode: 0o700 });
-  await writeFile(assetPath(id, 'original'), bytes, { flag: 'wx', mode: 0o600 });
-  if (checksum(await readFile(assetPath(id, 'original'))) !== hash) throw new AppError('Copy verification failed. Please retry.', 500);
-  const derivativeFormat = metadata.hasAlpha ? 'png' : 'jpeg';
+  return { width: rotated ? metadata.height : metadata.width, height: rotated ? metadata.width : metadata.height, capturedAt, derivativeFormat: metadata.hasAlpha ? 'png' as const : 'jpeg' as const };
+}
+async function writeVerifiedCopy(target: string, bytes: Buffer, hash: string) {
+  await writeFile(target, bytes, { flag: 'wx', mode: 0o600 });
+  if (checksum(await readFile(target)) !== hash) throw new AppError('Copy verification failed. Please retry.', 500);
+}
+async function writeDerivatives(id: string, bytes: Buffer, derivativeFormat: 'jpeg' | 'png', suffix = '') {
+  const written: [string, string][] = [];
   for (const [kind, size] of [['thumb', 480], ['preview', 1800], ['analysis', 768]] as const) {
     const pipeline = sharp(bytes, { limitInputPixels: MAX_PIXELS }).autoOrient().resize(size, size, { fit: 'inside', withoutEnlargement: true }).withIccProfile('srgb');
-    if (kind !== 'analysis' && derivativeFormat === 'png') await pipeline.png().toFile(assetPath(id, kind, derivativeFormat));
-    else await pipeline.flatten({ background: '#ffffff' }).jpeg({ quality: kind === 'preview' ? 90 : 80 }).toFile(assetPath(id, kind));
+    const target = kind !== 'analysis' && derivativeFormat === 'png' ? assetPath(id, kind, derivativeFormat) : assetPath(id, kind);
+    if (kind !== 'analysis' && derivativeFormat === 'png') await pipeline.png().toFile(target + suffix);
+    else await pipeline.flatten({ background: '#ffffff' }).jpeg({ quality: kind === 'preview' ? 90 : 80 }).toFile(target + suffix);
+    written.push([target + suffix, target]);
   }
-  const asset: Asset = { id, projectId, hash, filename: path.basename(filename.replaceAll('\\', '/')).slice(0, 200) || 'Untitled photo', width, height, bytes: bytes.length, capturedAt, createdAt: new Date().toISOString(), derivativeFormat };
+  return written;
+}
+export async function importPhoto(projectId: string, filename: string, bytes: Buffer, extra: Partial<Asset> = {}) {
+  getProject(projectId);
+  const hash = checksum(bytes);
+  const existing = db().prepare('SELECT id FROM assets WHERE projectId = ? AND hash = ?').get(projectId, hash) as { id: string } | undefined;
+  if (existing) return { asset: getAsset(existing.id), duplicate: true };
+  const info = await inspect(bytes);
+  const id = randomUUID();
+  await mkdir(path.dirname(assetPath(id, 'original')), { recursive: true, mode: 0o700 });
+  await writeVerifiedCopy(assetPath(id, 'original'), bytes, hash);
+  await writeDerivatives(id, bytes, info.derivativeFormat);
+  const asset: Asset = { ...extra, id, projectId, hash, filename: path.basename(filename.replaceAll('\\', '/')).slice(0, 200) || 'Untitled photo', width: info.width, height: info.height, bytes: bytes.length, capturedAt: extra.capturedAt ?? info.capturedAt, createdAt: new Date().toISOString(), derivativeFormat: info.derivativeFormat };
   db().prepare('INSERT INTO assets (id, projectId, hash, metadata) VALUES (?, ?, ?, ?)').run(id, projectId, hash, JSON.stringify(asset));
   return { asset, duplicate: false };
+}
+export function updateAssetMetadata(asset: Asset) {
+  db().prepare('UPDATE assets SET metadata = ? WHERE id = ? AND hash = ?').run(JSON.stringify(asset), asset.id, asset.hash);
+  return asset;
+}
+export async function replacePhotoBytes(asset: Asset, bytes: Buffer, changes: Partial<Asset> = {}) {
+  const hash = checksum(bytes);
+  const info = await inspect(bytes);
+  const suffix = `.${randomUUID()}.tmp`;
+  const temporary: [string, string][] = [[assetPath(asset.id, 'original') + suffix, assetPath(asset.id, 'original')]];
+  try {
+    await writeVerifiedCopy(temporary[0][0], bytes, hash);
+    temporary.push(...await writeDerivatives(asset.id, bytes, info.derivativeFormat, suffix));
+  } catch (error) {
+    await Promise.all(temporary.map(([from]) => rm(from, { force: true })));
+    throw error;
+  }
+  for (const [from, to] of temporary) await rename(from, to);
+  const next: Asset = { ...asset, ...changes, hash, width: info.width, height: info.height, bytes: bytes.length, capturedAt: changes.capturedAt ?? info.capturedAt ?? asset.capturedAt, derivativeFormat: info.derivativeFormat };
+  db().transaction(() => {
+    db().prepare('UPDATE assets SET hash = ?, metadata = ? WHERE id = ?').run(hash, JSON.stringify(next), asset.id);
+    db().prepare('DELETE FROM analyses WHERE assetId = ?').run(asset.id);
+  })();
+  return next;
 }
 
 const importState = globalThis as typeof globalThis & { autopostImportBusy?: boolean };

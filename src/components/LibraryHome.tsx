@@ -3,8 +3,9 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Aperture, ArrowUpRight, Plus, ShieldCheck, Layers3, ArrowRight, X, FolderOpen } from 'lucide-react';
+import { Aperture, ArrowUpRight, Plus, ShieldCheck, Layers3, ArrowRight, X, FolderOpen, Link2 } from 'lucide-react';
 import { api, jsonRequest } from '@/lib/api';
+import { LightroomConnect } from './LightroomConnect';
 import { assetUrl, type Project, type ProjectSummary } from '@/lib/domain';
 
 export function LibraryHome() {
@@ -14,6 +15,7 @@ export function LibraryHome() {
   const [title, setTitle] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [lightroom, setLightroom] = useState(false);
   const router = useRouter();
   useEffect(() => { api<ProjectSummary[]>('/api/projects').then(setProjects).catch(e => setError(e.message)).finally(() => setLoaded(true)); }, []);
   async function submit(event: React.FormEvent) {
@@ -26,7 +28,7 @@ export function LibraryHome() {
     } catch (e) { setError(e instanceof Error ? e.message : 'Could not create project.'); setBusy(false); }
   }
   return <div className="home">
-    <header className="home-nav"><Link href="/" className="brand"><Aperture size={25} strokeWidth={1.6} />autopost<span className="brand-dot">.</span></Link><span className="nav-label">THE PHOTOGRAPHER’S EDITING TABLE</span><div className="local-badge"><span /> Local studio</div></header>
+    <header className="home-nav"><Link href="/" className="brand"><Aperture size={25} strokeWidth={1.6} />autopost<span className="brand-dot">.</span></Link><span className="nav-label">THE PHOTOGRAPHER’S EDITING TABLE</span><div className="home-nav-actions"><button className="button subtle" onClick={() => setLightroom(true)}><Link2 size={15} /> Connect Lightroom</button><div className="local-badge"><span /> Local studio</div></div></header>
     <main className="home-main">
       <section className="home-hero">
         <div className="hero-copy"><div className="eyebrow"><span className="tiny-line" /> FROM FINISHED PHOTOS TO FINISHED POSTS</div><h1>Good photographs<br />deserve to be <em>seen.</em></h1><p>Your work is already made. Find the stories inside it,<br className="desktop-break" /> give them room to breathe, and put them out into the world.</p><button className="button primary large" onClick={() => setCreate(true)}>Start a collection <ArrowUpRight size={19} /></button><div className="hero-footnote"><ShieldCheck size={15} /> Your originals stay untouched. Your studio stays local.</div></div>
@@ -39,5 +41,6 @@ export function LibraryHome() {
       <footer className="home-footer"><span>LESS FRICTION. MORE PHOTOGRAPHY.</span><span>Curate thoughtfully. Publish intentionally.</span></footer>
     </main>
     {create && <div className="modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget && !busy) setCreate(false); }}><form className="dialog create-dialog" role="dialog" aria-modal="true" aria-labelledby="create-title" onSubmit={submit}><button type="button" className="icon-button dialog-close" aria-label="Close" onClick={() => setCreate(false)}><X size={19} /></button><div className="dialog-icon"><FolderOpen size={25} /></div><div className="eyebrow">A PLACE FOR YOUR PHOTOGRAPHS</div><h2 id="create-title">Start a collection.</h2><p>A trip, a festival, a Sunday afternoon. Name the story before you find the posts.</p><label className="field-label" htmlFor="collection-title">COLLECTION NAME</label><input id="collection-title" autoFocus placeholder="Sziget, after hours" value={title} onChange={e => setTitle(e.target.value)} maxLength={100} required /><div className="safety-note"><ShieldCheck size={18} /><span>Photos are copied into this app’s local library. Originals are never modified.</span></div><button className="button primary full" disabled={busy || !title.trim()}>{busy ? 'Creating…' : 'Create collection'}<ArrowRight size={17} /></button>{error && <p className="error-text" role="alert">{error}</p>}</form></div>}
+    {lightroom && <LightroomConnect onClose={() => setLightroom(false)} />}
   </div>;
 }

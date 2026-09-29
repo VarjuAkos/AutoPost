@@ -110,6 +110,19 @@ code { font-size: 11px; }
 .create-dialog > input { width: 100%; }
 .safety-note { display: flex; gap: 10px; align-items: flex-start; font-size: 10px; line-height: 1.6; color: #8a937b; margin: 20px 0; }
 .safety-note svg { flex-shrink: 0; margin-top: 1px; }
+.home-nav-actions { display: flex; align-items: center; gap: 10px; }
+.home-nav-actions .button { font-size: 11px; padding: 8px 12px; }
+.lightroom-dialog > p { font-size: 12px; line-height: 1.8; color: #858c77; margin: 16px 0 20px; }
+.lightroom-status { font-size: 11px; color: #7f876f; padding: 11px 13px; background: #f1f3ea; border-radius: 6px; }
+.lightroom-status strong { color: #4a5a36; font-weight: 600; }
+.lightroom-token { margin-top: 18px; }
+.lightroom-token > div { display: flex; gap: 8px; }
+.lightroom-token input { flex: 1; min-width: 0; font-family: monospace; font-size: 11px; }
+.lightroom-token small { display: block; font-size: 10px; color: #8a937b; margin-top: 8px; line-height: 1.5; }
+.lightroom-actions { display: flex; align-items: center; gap: 14px; margin-top: 18px; }
+.lightroom-steps { margin: 22px 0 0 16px; font-size: 11px; line-height: 1.7; color: #6f7862; list-style: decimal; }
+.lightroom-steps li { margin-bottom: 6px; }
+.lightroom-steps code { font-size: 10px; background: #eef1e6; padding: 1px 4px; border-radius: 3px; }
 .help-list { padding-left: 16px; margin: 24px 0; }
 .help-list li { padding-left: 7px; margin-bottom: 19px; }
 .help-list strong { font-size: 12px; }
@@ -170,6 +183,14 @@ code { font-size: 11px; }
 .photo-tile:hover .photo-select-dot, .photo-tile.selected .photo-select-dot { opacity: 1; }
 .photo-tile.selected .photo-select-dot { background: #82975d; border-color: #82975d; }
 .used-dot { position: absolute; bottom: 30px; left: 11px; width: 5px; height: 5px; background: #e1e8cf; border: 1px solid #fff; border-radius: 50%; box-shadow: 0 0 4px #0006; }
+.photo-rating { position: absolute; top: 7px; left: 7px; padding: 1px 4px; border-radius: 3px; background: #1f24189c; color: #f6d77a; font-size: 8px; letter-spacing: .5px; line-height: 1.4; }
+.photo-unlinked { position: absolute; bottom: 27px; right: 8px; display: grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: #fffc; color: #a2553f; }
+.rating-filter { display: flex; align-items: center; gap: 2px; margin: 10px 18px 0; font-size: 8px; color: #9aa189; letter-spacing: 1px; }
+.rating-filter > span { margin-right: 6px; }
+.rating-filter button { font-size: 14px; line-height: 1; padding: 1px; color: #d3d7c6; }
+.rating-filter button.active { color: #d8a93a; }
+.rating-filter button:hover { color: #c59a33; }
+.rating-filter small { margin-left: 6px; font-size: 9px; letter-spacing: 0; }
 .library-footer { padding: 17px 18px; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--line); }
 .library-footer .text-button { font-size: 9px; }
 .library-footer > span { font-size: 8px; color: #a2a991; }

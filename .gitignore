@@ -12,3 +12,4 @@ test-results/
 *.tsbuildinfo
 .DS_Store
 coverage/
+vendor/lrc-sdk/

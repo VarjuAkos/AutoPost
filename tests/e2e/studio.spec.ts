@@ -260,6 +260,45 @@ test('board nodes initialize, drag without warnings, and save only the final pos
   expect(warnings).toEqual([]);
 });
 
+test('pairs Lightroom, shows published star ratings, filters by rating, and revokes the token', async ({ page, request }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Connect Lightroom' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Connect Lightroom.' });
+  await dialog.getByRole('button', { name: /Generate/ }).click();
+  const tokenField = dialog.getByLabel('PAIRING TOKEN · SHOWN ONCE');
+  await expect(tokenField).toHaveValue(/^ap_[A-Za-z0-9_-]{40,}$/);
+  const token = await tokenField.inputValue();
+  await expect(dialog.getByText('Paired', { exact: true })).toBeVisible();
+  const lrCollectionId = String(Date.now());
+  const publish = async (color: string, rating: number | null, uuid: string) => request.post('/api/integrations/lightroom/photos', {
+    headers: { Authorization: `Bearer ${token}` },
+    multipart: {
+      metadata: JSON.stringify({ lrCollectionId, lrCollectionName: `Lightroom ${lrCollectionId}`, lrPhotoUuid: uuid, filename: `${uuid}.jpg`, rating, label: null, pick: 0, keywords: [], dateTimeOriginal: null }),
+      photo: { name: `${uuid}.jpg`, mimeType: 'image/jpeg', buffer: await sharp({ create: { width: 500, height: 400, channels: 3, background: color } }).jpeg().toBuffer() },
+    },
+  });
+  const first = await publish('#b34d2e', 4, 'photo-four');
+  expect(first.status()).toBe(200);
+  const { projectId } = await first.json() as { projectId: string };
+  expect((await publish('#3d6b8f', 1, 'photo-one')).status()).toBe(200);
+  expect((await publish('#c9b04a', null, 'photo-none')).status()).toBe(200);
+  expect((await request.post('/api/integrations/lightroom/photos', { headers: { Authorization: `Bearer ${token}`, Origin: origin }, multipart: { metadata: '{}' } })).status()).toBe(403);
+  await page.goto(`/projects/${projectId}`);
+  await expect(page.getByRole('heading', { name: `Lightroom ${lrCollectionId}`, exact: true })).toBeVisible();
+  await expect(page.getByLabel('4 stars', { exact: true })).toBeVisible();
+  await expect(page.locator('.photo-tile')).toHaveCount(3);
+  await page.getByRole('button', { name: 'At least 3 stars' }).click();
+  await expect(page.locator('.photo-tile')).toHaveCount(1);
+  await page.getByRole('button', { name: 'At least 3 stars' }).click();
+  await expect(page.locator('.photo-tile')).toHaveCount(3);
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Connect Lightroom' }).click();
+  page.once('dialog', confirm => void confirm.accept());
+  await page.getByRole('dialog', { name: 'Connect Lightroom.' }).getByRole('button', { name: 'Disconnect' }).click();
+  await expect(page.getByText('Not paired', { exact: true })).toBeVisible();
+  expect((await publish('#111111', 2, 'after-revoke')).status()).toBe(401);
+});
+
 for (const size of [170, 300]) {
   test(`curates all ${size} photos in batches with configurable post count and allowance`, async ({ page, request }) => {
     const created = await request.post('/api/projects', { headers: { Origin: origin }, data: { title: `Large browser collection ${size}` } });

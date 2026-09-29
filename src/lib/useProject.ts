@@ -75,6 +75,19 @@ export function useProject(id: string) {
     setProject(latest.current);
   }, []);
   useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState !== 'visible') return;
+      api<Project>(`/api/projects/${id}`).then(value => {
+        if (!latest.current) return;
+        latest.current = { ...latest.current, assets: value.assets };
+        setProject(latest.current);
+      }).catch(() => {});
+    };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    return () => { window.removeEventListener('focus', refresh); document.removeEventListener('visibilitychange', refresh); };
+  }, [id]);
+  useEffect(() => {
     const handler = (event: BeforeUnloadEvent) => {
       if (latest.current?.document !== saved.current) { event.preventDefault(); event.returnValue = ''; }
     };

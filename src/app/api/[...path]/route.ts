@@ -6,8 +6,10 @@ import { CURATION_LIMITS, documentSchema } from '@/lib/domain';
 import { exportAll, exportPost } from '@/lib/server/export';
 import { approveRun, budgetStatus } from '@/lib/server/ai/budget';
 import { analyze, cachedAnalysis, curate } from '@/lib/server/ai/curation';
-import { guard } from '@/lib/server/http';
+import { guard, readJson as body } from '@/lib/server/http';
 import { checkConnection } from '@/lib/server/ai/client';
+import { handleLightroom, LIGHTROOM } from '@/lib/server/lightroom';
+import { createIntegrationToken, revokeIntegrationToken, tokenStatus } from '@/lib/server/tokens';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -15,27 +17,18 @@ const json = (value: unknown, status = 200) => Response.json(value, { status, he
 const selectionSchema = z.object({ assetIds: z.array(z.uuid()).min(1).max(CURATION_LIMITS.photos), consent: z.literal(true), runId: z.uuid(), budgetUsd: z.number().min(0.05).max(CURATION_LIMITS.maxRunUsd).default(0.5) });
 type Context = { params: Promise<{ path: string[] }> };
 
-async function body(request: Request) {
-  if (!request.body) throw new AppError('Request body required.');
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.length;
-    if (size > 2 * 1024 * 1024) { await reader.cancel(); throw new AppError('Request is too large.', 413); }
-    chunks.push(value);
-  }
-  try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); }
-  catch { throw new AppError('Invalid JSON.'); }
-}
 async function handle(request: Request, context: Context) {
   try {
-    guard(request);
     const { path: parts } = await context.params;
+    if (parts[0] === 'integrations' && parts[1] === LIGHTROOM && parts[2] !== 'token') return json(await handleLightroom(request, parts.slice(2)));
+    guard(request);
     const [resource, id, action, postId, tail] = parts;
     const method = request.method;
+    if (resource === 'integrations' && id === LIGHTROOM && action === 'token' && parts.length === 3) {
+      if (method === 'GET') return json(tokenStatus(LIGHTROOM));
+      if (method === 'POST') return json({ token: createIntegrationToken(LIGHTROOM) }, 201);
+      if (method === 'DELETE') { revokeIntegrationToken(LIGHTROOM); return json(tokenStatus(LIGHTROOM)); }
+    }
     if (resource === 'settings' && method === 'GET' && parts.length === 1) return json(budgetStatus());
     if (resource === 'settings' && id === 'check' && method === 'POST' && parts.length === 2) {
       z.object({ consent: z.literal(true) }).parse(await body(request));
@@ -44,7 +37,10 @@ async function handle(request: Request, context: Context) {
     if (resource === 'assets' && method === 'GET' && parts.length === 2) {
       const asset = getAsset(z.uuid().parse(id));
       const size = new URL(request.url).searchParams.get('size') === 'preview' ? 'preview' : 'thumb';
-      return new Response(new Uint8Array(await readFile(assetPath(asset.id, size, asset.derivativeFormat))), { headers: { 'Content-Type': `image/${asset.derivativeFormat || 'jpeg'}`, 'Cache-Control': 'private, max-age=86400', 'X-Content-Type-Options': 'nosniff' } });
+      const etag = `"${asset.hash.slice(0, 24)}-${size}"`;
+      const headers = { 'Cache-Control': 'private, no-cache', ETag: etag, 'X-Content-Type-Options': 'nosniff' };
+      if (request.headers.get('if-none-match') === etag) return new Response(null, { status: 304, headers });
+      return new Response(new Uint8Array(await readFile(assetPath(asset.id, size, asset.derivativeFormat))), { headers: { ...headers, 'Content-Type': `image/${asset.derivativeFormat || 'jpeg'}` } });
     }
     if (resource !== 'projects') throw new AppError('Not found.', 404);
     if (parts.length === 1) {
@@ -88,3 +84,4 @@ async function handle(request: Request, context: Context) {
 export const GET = handle;
 export const POST = handle;
 export const PUT = handle;
+export const DELETE = handle;
