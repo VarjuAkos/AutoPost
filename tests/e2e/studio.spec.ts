@@ -36,7 +36,16 @@ test('create a collection, import safely, edit, persist, and export ordered JPEG
   await page.getByLabel('Zoom', { exact: true }).fill('1.5');
   await page.getByRole('button', { name: 'Pin position', exact: true }).click();
   await page.getByRole('button', { name: 'Earlier', exact: true }).click();
-  await page.getByLabel('Add photo to post').selectOption({ label: 'detail.jpg' });
+  await page.getByRole('button', { name: 'Add photos', exact: true }).click();
+  const picker = page.getByRole('region', { name: 'Add photo to post' });
+  await expect(picker.getByRole('button', { name: /^Add / })).toHaveCount(3);
+  await picker.getByRole('button', { name: 'Add detail.jpg', exact: true }).click();
+  await picker.getByRole('button', { name: 'Add detail.jpg', exact: true }).click();
+  await page.getByRole('button', { name: 'Close photo picker' }).click();
+  await expect(editor.getByText('5 / 20 slides', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Remove slide 5', exact: true }).click();
+  await expect(editor.getByText('4 / 20 slides', { exact: true })).toBeVisible();
+  await expect(editor.getByText('1080 × 1440 · 3:4', { exact: true })).toBeVisible();
   await expect(editor.getByText('Saved locally', { exact: true })).toBeVisible();
   const downloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Export ZIP', exact: true }).click();
@@ -49,7 +58,7 @@ test('create a collection, import safely, edit, persist, and export ordered JPEG
   expect(Object.keys(images)).toEqual(['01.jpg', '02.jpg', '03.jpg', '04.jpg']);
   for (const bytes of Object.values(images)) {
     const m = await sharp(bytes).metadata();
-    expect([m.width, m.height, m.format]).toEqual([1080, 1350, 'jpeg']);
+    expect([m.width, m.height, m.format]).toEqual([1080, 1440, 'jpeg']);
     expect(m.exif).toBeUndefined();
   }
   const projectId = page.url().split('/').pop();
@@ -60,6 +69,12 @@ test('create a collection, import safely, edit, persist, and export ordered JPEG
   await page.getByRole('button', { name: 'Back to the board' }).click();
   await page.getByRole('button', { name: 'Contact sheets', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Edit Synthetic story' })).toBeVisible();
+  await page.getByRole('button', { name: 'New post', exact: true }).click();
+  const allPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export all (1)', exact: true }).click();
+  const all: Buffer[] = [];
+  for await (const chunk of await (await allPromise).createReadStream()) all.push(Buffer.from(chunk));
+  expect(Object.keys(unzipSync(Buffer.concat(all))).filter(name => !name.endsWith('/'))).toEqual(['01 Synthetic story/01.jpg', '01 Synthetic story/02.jpg', '01 Synthetic story/03.jpg', '01 Synthetic story/04.jpg']);
   await page.reload();
   await expect(page.getByRole('button', { name: 'Edit Synthetic story' })).toBeVisible();
   await page.getByRole('button', { name: 'Curate with AI', exact: true }).click();
@@ -110,6 +125,13 @@ test('AI proposals require consent and explicit acceptance, with recoverable fai
   await dialog.getByRole('button', { name: 'Curate my photographs' }).click();
   await expect(dialog.getByRole('alert')).toHaveText('Synthetic AI failure. Your edits are unchanged.');
   expect((await (await request.get(`/api/projects/${project.id}`)).json()).document.posts).toEqual(saved.document.posts);
+  await dialog.getByRole('button', { name: 'Close AI curation' }).click();
+  await page.getByRole('button', { name: 'Remove A quieter rhythm', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Edit A quieter rhythm' })).toHaveCount(0);
+  await expect.poll(async () => (await (await request.get(`/api/projects/${project.id}`)).json()).document.posts.length).toBe(0);
+  expect((await (await request.get(`/api/projects/${project.id}`)).json()).assets).toHaveLength(1);
+  await page.getByRole('button', { name: 'Undo last edit' }).click();
+  await expect(page.getByRole('button', { name: 'Edit A quieter rhythm' })).toBeVisible();
 });
 
 test('resume skips cached photos, preserves the run allowance, and explains held estimates', async ({ page, request }) => {

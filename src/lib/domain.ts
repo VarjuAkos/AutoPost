@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+export const MAX_ZOOM = 5;
 export const colorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/);
 export const frameSchema = z.object({
   mode: z.enum(['fit', 'fill']),
@@ -7,15 +8,17 @@ export const frameSchema = z.object({
   margin: z.number().min(0).max(0.2),
   x: z.number().min(0).max(1),
   y: z.number().min(0).max(1),
-  zoom: z.number().min(1).max(3),
+  zoom: z.number().min(1).max(MAX_ZOOM),
 });
 export type Frame = z.infer<typeof frameSchema>;
 export const defaultFrame: Frame = { mode: 'fit', background: '#ffffff', margin: 0.04, x: 0.5, y: 0.5, zoom: 1 };
 export const slideSchema = z.object({ id: z.uuid(), assetId: z.uuid(), frame: frameSchema, pinned: z.boolean() });
 export type Slide = z.infer<typeof slideSchema>;
+export const RATIOS = { '4:5': { width: 1080, height: 1350 }, '3:4': { width: 1080, height: 1440 } } as const;
+export type Ratio = keyof typeof RATIOS;
 export const postSchema = z.object({
   id: z.uuid(), title: z.string().min(1).max(120), rationale: z.string().max(1000),
-  status: z.enum(['draft', 'accepted']), lens: z.string().max(80), ratio: z.literal('4:5'),
+  status: z.enum(['draft', 'accepted']), lens: z.string().max(80), ratio: z.enum(['4:5', '3:4']),
   frame: frameSchema, slides: z.array(slideSchema).max(20),
   position: z.object({ x: z.number().min(-10000).max(10000), y: z.number().min(-10000).max(10000) }),
 });
@@ -39,7 +42,12 @@ export function newSlide(assetId: string, frame: Frame = defaultFrame): Slide {
   return { id: crypto.randomUUID(), assetId, frame: { ...frame }, pinned: false };
 }
 export function newPost(assetIds: string[], index: number, title = 'Untitled story'): Post {
-  return { id: crypto.randomUUID(), title, rationale: '', status: 'accepted', lens: 'Manual', ratio: '4:5', frame: { ...defaultFrame }, slides: assetIds.slice(0, 20).map(id => newSlide(id)), position: { x: (index % 5) * 360, y: Math.floor(index / 5) * 470 } };
+  return { id: crypto.randomUUID(), title, rationale: '', status: 'accepted', lens: 'Manual', ratio: '3:4', frame: { ...defaultFrame }, slides: assetIds.slice(0, 20).map(id => newSlide(id)), position: { x: (index % 5) * 360, y: Math.floor(index / 5) * 470 } };
+}
+export function byCaptureTime(a: Asset, b: Asset) {
+  if (a.capturedAt && b.capturedAt && a.capturedAt !== b.capturedAt) return a.capturedAt.localeCompare(b.capturedAt);
+  if (Boolean(a.capturedAt) !== Boolean(b.capturedAt)) return a.capturedAt ? -1 : 1;
+  return a.filename.localeCompare(b.filename, undefined, { numeric: true });
 }
 export function reorder<T>(items: T[], from: number, to: number): T[] {
   if (from < 0 || to < 0 || from >= items.length || to >= items.length) return items;

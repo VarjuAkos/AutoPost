@@ -25,6 +25,8 @@ describe('safe media pipeline', () => {
     const center = (675 * info.width + 540) * info.channels;
     expect(data[center]).toBeGreaterThan(220);
     expect(data[center + 1]).toBeLessThan(100);
+    const tall = await sharp(await renderSlide(asset, { ...defaultFrame, mode: 'fill' }, '3:4')).metadata();
+    expect([tall.width, tall.height]).toEqual([1080, 1440]);
   });
   it('normalizes EXIF rotation before framing and removes private metadata', async () => {
     const project = createProject('Orientation test');

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { defaultFrame, newPost, reorder, validateDocument } from '../src/lib/domain';
+import { byCaptureTime, defaultFrame, newPost, reorder, validateDocument, type Asset } from '../src/lib/domain';
 import { layout } from '../src/lib/layout';
 
 describe('non-destructive framing', () => {
@@ -19,7 +19,26 @@ describe('non-destructive framing', () => {
       expect(source.x + source.width).toBeLessThanOrEqual(3000);
     }
   });
+  it('zooms a fitted photo past its edges, cropping inside the margin', () => {
+    const { source, target } = layout(3000, 2000, { ...defaultFrame, margin: 0.05, zoom: 2.5 }, '3:4');
+    expect(target).toEqual({ x: 54, y: 54, width: 972, height: 1332 });
+    expect(source.width).toBeLessThan(3000);
+    expect(source.x).toBeGreaterThan(0);
+    expect(source.x + source.width).toBeLessThanOrEqual(3000);
+  });
   it('rejects invalid dimensions', () => expect(() => layout(0, 20, defaultFrame)).toThrow());
+  it('uses the taller 3:4 canvas when requested', () => {
+    expect(layout(3000, 2000, { ...defaultFrame, mode: 'fill' }, '3:4').target).toEqual({ x: 0, y: 0, width: 1080, height: 1440 });
+    expect(layout(3000, 2000, { ...defaultFrame, margin: 0 }, '3:4').target).toEqual({ x: 0, y: 360, width: 1080, height: 720 });
+  });
+});
+
+describe('chronological photo order', () => {
+  const asset = (filename: string, capturedAt: string | null): Asset => ({ id: filename, projectId: 'p', filename, hash: filename, width: 1, height: 1, bytes: 1, capturedAt, createdAt: '2026-01-01T00:00:00.000Z' });
+  it('sorts by capture time, then undated photos by natural filename order', () => {
+    const sorted = [asset('img10.jpg', null), asset('late.jpg', '2026-05-02T10:00:00.000Z'), asset('img2.jpg', null), asset('early.jpg', '2026-05-01T08:00:00.000Z')].sort(byCaptureTime);
+    expect(sorted.map(a => a.filename)).toEqual(['early.jpg', 'late.jpg', 'img2.jpg', 'img10.jpg']);
+  });
 });
 
 describe('document integrity', () => {

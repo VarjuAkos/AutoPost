@@ -2,15 +2,15 @@
 
 import { useMemo, useState } from 'react';
 import { ReactFlow, Background, Controls, BackgroundVariant, applyNodeChanges, type Node, type NodeProps, type NodeChange, type Viewport } from '@xyflow/react';
-import { ArrowUpRight, Plus, Sparkles, GripHorizontal, Layers3, Pin, Check } from 'lucide-react';
+import { ArrowUpRight, Plus, Sparkles, GripHorizontal, Layers3, Pin, Check, Trash2 } from 'lucide-react';
 import '@xyflow/react/dist/style.css';
 import { assetUrl, type Asset, type Post } from '@/lib/domain';
 import { SlidePreview } from '../editor/SlidePreview';
 
-type PostData = { post: Post; index: number; assets: Asset[]; open: (id: string) => void; accept: (id: string) => void; drop: (postId: string, assetId: string, from?: { postId: string; slideId: string }) => void };
+type PostData = { post: Post; index: number; assets: Asset[]; open: (id: string) => void; accept: (id: string) => void; remove: (id: string) => void; drop: (postId: string, assetId: string, from?: { postId: string; slideId: string }) => void };
 type PostFlowNode = Node<PostData, 'post'>;
 function PostNode({ data }: NodeProps<PostFlowNode>) {
-  const { post, index, assets, open, accept, drop } = data;
+  const { post, index, assets, open, accept, remove, drop } = data;
   const cover = post.slides[0];
   const coverAsset = assets.find(a => a.id === cover?.assetId);
   return <div className={`post-card ${post.status === 'draft' ? 'draft' : ''}`} onDragOver={e => { if (e.dataTransfer.types.some(t => t.startsWith('application/autopost'))) e.preventDefault(); }} onDrop={e => {
@@ -20,20 +20,20 @@ function PostNode({ data }: NodeProps<PostFlowNode>) {
     if (photo) drop(post.id, photo);
     if (moved) { try { const value = JSON.parse(moved); if (typeof value.assetId === 'string' && typeof value.postId === 'string' && typeof value.slideId === 'string') drop(post.id, value.assetId, value); } catch {} }
   }}>
-    <div className="post-drag-handle"><span className="post-index">STORY {String(index + 1).padStart(2, '0')}</span><GripHorizontal size={17} /><span className={`post-status ${post.status}`}>{post.status === 'draft' ? 'AI proposal' : `${post.slides.length} slides`}</span></div>
-    <button className="post-cover nodrag" onClick={() => open(post.id)} aria-label={`Edit ${post.title}`}>{coverAsset ? <SlidePreview asset={coverAsset} frame={cover.frame} thumbnail /> : <div className="post-cover-empty"><Plus size={28} strokeWidth={1} /><span>Drop photographs here</span></div>}<span className="cover-open"><ArrowUpRight size={17} /></span></button>
+    <div className="post-drag-handle"><span className="post-index">STORY {String(index + 1).padStart(2, '0')}</span><GripHorizontal size={17} /><span className="post-handle-end"><span className={`post-status ${post.status}`}>{post.status === 'draft' ? 'AI proposal' : `${post.slides.length} slides`}</span><button className="post-remove nodrag" aria-label={`Remove ${post.title}`} title="Remove from board (photos stay safe)" onClick={() => remove(post.id)}><Trash2 size={13} /></button></span></div>
+    <button className="post-cover nodrag" onClick={() => open(post.id)} aria-label={`Edit ${post.title}`}>{coverAsset ? <SlidePreview asset={coverAsset} frame={cover.frame} ratio={post.ratio} thumbnail /> : <div className="post-cover-empty"><Plus size={28} strokeWidth={1} /><span>Drop photographs here</span></div>}<span className="cover-open"><ArrowUpRight size={17} /></span></button>
     {post.slides.length > 1 && <div className="post-contact-strip nodrag">{post.slides.slice(1, 6).map(slide => <div key={slide.id} draggable onDragStart={e => { e.dataTransfer.setData('application/autopost-slide', JSON.stringify({ assetId: slide.assetId, postId: post.id, slideId: slide.id })); e.dataTransfer.effectAllowed = 'move'; }}><img src={assetUrl(slide.assetId)} alt="" draggable={false} loading="lazy" />{slide.pinned && <Pin size={10} />}</div>)}{post.slides.length > 6 && <span>+{post.slides.length - 6}</span>}</div>}
-    <div className="post-caption"><h3><button className="nodrag" onClick={() => open(post.id)}>{post.title}</button></h3><p>{post.rationale || 'A story in the making. Arrange it your way.'}</p><div className="post-caption-bottom"><span>{post.lens}</span>{post.status === 'draft' ? <button className="text-button nodrag" onClick={() => accept(post.id)}><Check size={12} /> Keep this story</button> : <span>4:5 / CAROUSEL</span>}</div></div>
+    <div className="post-caption"><h3><button className="nodrag" onClick={() => open(post.id)}>{post.title}</button></h3><p>{post.rationale || 'A story in the making. Arrange it your way.'}</p><div className="post-caption-bottom"><span>{post.lens}</span>{post.status === 'draft' ? <button className="text-button nodrag" onClick={() => accept(post.id)}><Check size={12} /> Keep this story</button> : <span>{post.ratio} / CAROUSEL</span>}</div></div>
   </div>;
 }
 const nodeTypes = { post: PostNode };
-type Props = { posts: Post[]; assets: Asset[]; viewport: Viewport; view: 'board' | 'sheets'; onOpen: (id: string) => void; onAccept: (id: string) => void; onDrop: PostData['drop']; onPositions: (positions: { id: string; x: number; y: number }[]) => void; onViewport: (v: Viewport) => void; onNew: () => void; onAI: () => void };
-export function PostBoard({ posts, assets, viewport, view, onOpen, onAccept, onDrop, onPositions, onViewport, onNew, onAI }: Props) {
+type Props = { posts: Post[]; assets: Asset[]; viewport: Viewport; view: 'board' | 'sheets'; onOpen: (id: string) => void; onAccept: (id: string) => void; onRemove: (id: string) => void; onDrop: PostData['drop']; onPositions: (positions: { id: string; x: number; y: number }[]) => void; onViewport: (v: Viewport) => void; onNew: () => void; onAI: () => void };
+export function PostBoard({ posts, assets, viewport, view, onOpen, onAccept, onRemove, onDrop, onPositions, onViewport, onNew, onAI }: Props) {
   const [nodeState, setNodeState] = useState<PostFlowNode[]>([]);
   const nodes = useMemo<PostFlowNode[]>(() => posts.map((post, index) => {
     const local = nodeState.find(node => node.id === post.id);
-    return { ...local, id: post.id, type: 'post', position: local?.dragging ? local.position : post.position, dragHandle: '.post-drag-handle', data: { post, index, assets, open: onOpen, accept: onAccept, drop: onDrop } };
-  }), [posts, assets, nodeState, onOpen, onAccept, onDrop]);
+    return { ...local, id: post.id, type: 'post', position: local?.dragging ? local.position : post.position, dragHandle: '.post-drag-handle', data: { post, index, assets, open: onOpen, accept: onAccept, remove: onRemove, drop: onDrop } };
+  }), [posts, assets, nodeState, onOpen, onAccept, onRemove, onDrop]);
   function onChanges(changes: NodeChange<PostFlowNode>[]) {
     setNodeState(applyNodeChanges(changes, nodes));
   }

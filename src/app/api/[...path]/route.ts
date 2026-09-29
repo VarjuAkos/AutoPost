@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { AppError, createProject, getAsset, getProject, listProjects, saveProject } from '@/lib/server/db';
 import { assetPath, importPhoto, readUpload, withImportSlot } from '@/lib/server/storage';
 import { CURATION_LIMITS, documentSchema } from '@/lib/domain';
-import { exportPost } from '@/lib/server/export';
+import { exportAll, exportPost } from '@/lib/server/export';
 import { approveRun, budgetStatus } from '@/lib/server/ai/budget';
 import { analyze, cachedAnalysis, curate } from '@/lib/server/ai/curation';
 import { guard } from '@/lib/server/http';
@@ -76,6 +76,7 @@ async function handle(request: Request, context: Context) {
       approveRun(input.runId, id, input.budgetUsd);
       return json(await curate(id, input.assetIds, input.lens, input.count, input.brief, input.runId, input.targetId, { minSlides: input.minSlides, maxSlides: input.maxSlides }));
     }
+    if (action === 'export' && method === 'POST' && parts.length === 3) return exportAll(id);
     if (action === 'posts' && tail === 'export' && method === 'POST' && parts.length === 5) return exportPost(id, z.uuid().parse(postId));
     throw new AppError('Not found.', 404);
   } catch (error) {

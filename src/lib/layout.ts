@@ -1,16 +1,15 @@
-import type { Frame } from './domain';
+import { RATIOS, type Frame, type Ratio } from './domain';
 
-export const CANVAS = { width: 1080, height: 1350 };
 export type Rect = { x: number; y: number; width: number; height: number };
 
-export function layout(width: number, height: number, frame: Frame): { source: Rect; target: Rect } {
+export function layout(width: number, height: number, frame: Frame, ratio: Ratio = '4:5'): { source: Rect; target: Rect } {
   if (!(width > 0 && height > 0)) throw new Error('Invalid image dimensions.');
-  const cw = CANVAS.width;
-  const ch = CANVAS.height;
+  const cw = RATIOS[ratio].width;
+  const ch = RATIOS[ratio].height;
   const margin = frame.mode === 'fit' ? Math.round(cw * frame.margin) : 0;
   const aw = cw - margin * 2;
   const ah = ch - margin * 2;
-  const scale = frame.mode === 'fit' ? Math.min(aw / width, ah / height) : Math.max(cw / width, ch / height) * frame.zoom;
+  const scale = (frame.mode === 'fit' ? Math.min(aw / width, ah / height) : Math.max(cw / width, ch / height)) * frame.zoom;
   const iw = width * scale;
   const ih = height * scale;
   const left = margin + (aw - iw) * frame.x;
