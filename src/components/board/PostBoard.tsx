@@ -2,17 +2,21 @@
 
 import { useMemo, useState } from 'react';
 import { ReactFlow, Background, Controls, BackgroundVariant, applyNodeChanges, type Node, type NodeProps, type NodeChange, type Viewport } from '@xyflow/react';
-import { ArrowUpRight, Plus, Sparkles, GripHorizontal, Layers3, Pin, Check, Trash2 } from 'lucide-react';
+import { ArrowUpRight, Plus, Sparkles, GripHorizontal, Layers3, Pin, Check, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
 import '@xyflow/react/dist/style.css';
 import { assetUrl, type Asset, type Post } from '@/lib/domain';
 import { SlidePreview } from '../editor/SlidePreview';
 
-type PostData = { post: Post; index: number; assets: Asset[]; open: (id: string) => void; accept: (id: string) => void; remove: (id: string) => void; drop: (postId: string, assetId: string, from?: { postId: string; slideId: string }) => void };
+type PostData = { post: Post; index: number; assets: Asset[]; open: (id: string) => void; accept: (id: string) => void; remove: (id: string) => void; drop: (postId: string, assetId: string, from?: { postId: string; slideId: string }) => void; onBoard?: boolean };
 type PostFlowNode = Node<PostData, 'post'>;
 function PostNode({ data }: NodeProps<PostFlowNode>) {
-  const { post, index, assets, open, accept, remove, drop } = data;
-  const cover = post.slides[0];
+  const { post, index, assets, open, accept, remove, drop, onBoard } = data;
+  const [current, setCurrent] = useState(0);
+  const count = post.slides.length;
+  const shown = Math.min(current, Math.max(count - 1, 0));
+  const cover = post.slides[shown];
   const coverAsset = assets.find(a => a.id === cover?.assetId);
+  const step = (delta: number) => setCurrent((shown + delta + count) % count);
   return <div className={`post-card ${post.status === 'draft' ? 'draft' : ''}`} onDragOver={e => { if (e.dataTransfer.types.some(t => t.startsWith('application/autopost'))) e.preventDefault(); }} onDrop={e => {
     const photo = e.dataTransfer.getData('application/autopost-asset');
     const moved = e.dataTransfer.getData('application/autopost-slide');
@@ -20,10 +24,18 @@ function PostNode({ data }: NodeProps<PostFlowNode>) {
     if (photo) drop(post.id, photo);
     if (moved) { try { const value = JSON.parse(moved); if (typeof value.assetId === 'string' && typeof value.postId === 'string' && typeof value.slideId === 'string') drop(post.id, value.assetId, value); } catch {} }
   }}>
-    <div className="post-drag-handle"><span className="post-index">STORY {String(index + 1).padStart(2, '0')}</span><GripHorizontal size={17} /><span className="post-handle-end"><span className={`post-status ${post.status}`}>{post.status === 'draft' ? 'AI proposal' : `${post.slides.length} slides`}</span><button className="post-remove nodrag" aria-label={`Remove ${post.title}`} title="Remove from board (photos stay safe)" onClick={() => remove(post.id)}><Trash2 size={13} /></button></span></div>
-    <button className="post-cover nodrag" onClick={() => open(post.id)} aria-label={`Edit ${post.title}`}>{coverAsset ? <SlidePreview asset={coverAsset} frame={cover.frame} ratio={post.ratio} thumbnail /> : <div className="post-cover-empty"><Plus size={28} strokeWidth={1} /><span>Drop photographs here</span></div>}<span className="cover-open"><ArrowUpRight size={17} /></span></button>
-    {post.slides.length > 1 && <div className="post-contact-strip nodrag">{post.slides.slice(1, 6).map(slide => <div key={slide.id} draggable onDragStart={e => { e.dataTransfer.setData('application/autopost-slide', JSON.stringify({ assetId: slide.assetId, postId: post.id, slideId: slide.id })); e.dataTransfer.effectAllowed = 'move'; }}><img src={assetUrl(slide.assetId)} alt="" draggable={false} loading="lazy" />{slide.pinned && <Pin size={10} />}</div>)}{post.slides.length > 6 && <span>+{post.slides.length - 6}</span>}</div>}
-    <div className="post-caption"><h3><button className="nodrag" onClick={() => open(post.id)}>{post.title}</button></h3><p>{post.rationale || 'A story in the making. Arrange it your way.'}</p><div className="post-caption-bottom"><span>{post.lens}</span>{post.status === 'draft' ? <button className="text-button nodrag" onClick={() => accept(post.id)}><Check size={12} /> Keep this story</button> : <span>{post.ratio} / CAROUSEL</span>}</div></div>
+    <div className="post-header"><span className="post-index">STORY {String(index + 1).padStart(2, '0')}</span><GripHorizontal size={17} /><span className="post-handle-end"><span className={`post-status ${post.status}`}>{post.status === 'draft' ? 'AI proposal' : `${post.slides.length} slides`}</span><button className="post-remove nodrag" aria-label={`Remove ${post.title}`} title="Remove from board (photos stay safe)" onClick={() => remove(post.id)}><Trash2 size={13} /></button></span></div>
+    <div className="post-cover-wrap">
+      <button className="post-cover" onClick={() => open(post.id)} aria-label={`Edit ${post.title}`}>{coverAsset ? <SlidePreview asset={coverAsset} frame={cover.frame} ratio={post.ratio} thumbnail /> : <div className="post-cover-empty"><Plus size={28} strokeWidth={1} /><span>Drop photographs here</span></div>}<span className="cover-open"><ArrowUpRight size={17} /></span></button>
+      {count > 1 && <>
+        <button className="cover-nav prev nodrag" aria-label={`Previous slide of ${post.title}`} onClick={() => step(-1)}><ChevronLeft size={16} /></button>
+        <button className="cover-nav next nodrag" aria-label={`Next slide of ${post.title}`} onClick={() => step(1)}><ChevronRight size={16} /></button>
+        <span className="cover-count">{shown + 1} / {count}</span>
+        <span className="cover-dots">{post.slides.slice(0, 12).map((slide, i) => <i key={slide.id} className={i === shown ? 'active' : ''} />)}</span>
+      </>}
+    </div>
+    {count > 1 && <div className="post-contact-strip">{post.slides.slice(1, 6).map((slide, i) => <div key={slide.id} className={i + 1 === shown ? 'active' : ''} title={onBoard ? 'Click to preview · ⌥/Alt-drag into another story' : 'Click to preview · drag into another story'} onClick={() => setCurrent(i + 1)} draggable={onBoard ? undefined : true} onMouseDownCapture={onBoard ? e => { e.currentTarget.draggable = e.altKey; e.currentTarget.classList.toggle('nodrag', e.altKey); } : undefined} onDragStart={e => { e.dataTransfer.setData('application/autopost-slide', JSON.stringify({ assetId: slide.assetId, postId: post.id, slideId: slide.id })); e.dataTransfer.effectAllowed = 'move'; }}><img src={assetUrl(slide.assetId)} alt="" draggable={false} loading="lazy" />{slide.pinned && <Pin size={10} />}</div>)}{post.slides.length > 6 && <span>+{post.slides.length - 6}</span>}</div>}
+    <div className="post-caption"><h3><button onClick={() => open(post.id)}>{post.title}</button></h3><p>{post.rationale || 'A story in the making. Arrange it your way.'}</p><div className="post-caption-bottom"><span>{post.lens}</span>{post.status === 'draft' ? <button className="text-button nodrag" onClick={() => accept(post.id)}><Check size={12} /> Keep this story</button> : <span>{post.ratio} / CAROUSEL</span>}</div></div>
   </div>;
 }
 const nodeTypes = { post: PostNode };
@@ -32,12 +44,12 @@ export function PostBoard({ posts, assets, viewport, view, onOpen, onAccept, onR
   const [nodeState, setNodeState] = useState<PostFlowNode[]>([]);
   const nodes = useMemo<PostFlowNode[]>(() => posts.map((post, index) => {
     const local = nodeState.find(node => node.id === post.id);
-    return { ...local, id: post.id, type: 'post', position: local?.dragging ? local.position : post.position, dragHandle: '.post-drag-handle', data: { post, index, assets, open: onOpen, accept: onAccept, remove: onRemove, drop: onDrop } };
+    return { ...local, id: post.id, type: 'post', position: local?.dragging ? local.position : post.position, data: { post, index, assets, open: onOpen, accept: onAccept, remove: onRemove, drop: onDrop, onBoard: true } };
   }), [posts, assets, nodeState, onOpen, onAccept, onRemove, onDrop]);
   function onChanges(changes: NodeChange<PostFlowNode>[]) {
     setNodeState(applyNodeChanges(changes, nodes));
   }
   if (!posts.length) return <div className="board-empty"><div className="empty-board-art"><div /><div /><div /><Layers3 size={33} strokeWidth={1} /></div><div className="eyebrow">YOUR EDITING TABLE</div><h2>Find the story<br /><em>between the photographs.</em></h2><p>Select a few photos and make a post.<br />Or let AI suggest a different way to see your collection.</p><div><button className="button primary" onClick={onNew}><Plus size={16} /> Create a post</button><button className="button secondary" onClick={onAI} disabled={!assets.length}><Sparkles size={16} /> Curate with AI</button></div><span className="board-empty-foot">NOTHING IS FINAL. EVERYTHING IS YOURS TO ARRANGE.</span></div>;
   if (view === 'sheets') return <div className="sheets-grid">{nodes.map(node => <PostNode key={node.id} id={node.id} data={node.data} type="post" dragging={false} isConnectable={false} positionAbsoluteX={0} positionAbsoluteY={0} zIndex={0} selectable={false} deletable={false} draggable={false} selected={false} />)}<button className="new-post-tile" onClick={onNew}><Plus size={26} strokeWidth={1} /> Another story</button></div>;
-  return <ReactFlow<PostFlowNode> nodes={nodes} edges={[]} nodeTypes={nodeTypes} onNodesChange={onChanges} onNodeDragStop={(_, node, moved) => onPositions((moved.length ? moved : [node]).map(item => ({ id: item.id, ...item.position })))} nodeExtent={[[-10000, -10000], [10000, 10000]]} defaultViewport={viewport} onMoveEnd={(_, v) => onViewport(v)} minZoom={0.2} maxZoom={2} nodesConnectable={false} deleteKeyCode={null} panOnScroll zoomOnDoubleClick={false}><Background variant={BackgroundVariant.Dots} gap={24} size={1} color="#c8c7c0" /><Controls showInteractive={false} position="bottom-left" /></ReactFlow>;
+  return <ReactFlow<PostFlowNode> nodes={nodes} edges={[]} nodeTypes={nodeTypes} onNodesChange={onChanges} onNodeDragStop={(_, node, moved) => onPositions((moved.length ? moved : [node]).map(item => ({ id: item.id, ...item.position })))} nodeExtent={[[-10000, -10000], [10000, 10000]]} defaultViewport={viewport} onMoveEnd={(_, v) => onViewport(v)} minZoom={0.2} maxZoom={2} nodeDragThreshold={4} nodeClickDistance={4} nodesConnectable={false} deleteKeyCode={null} panOnScroll zoomOnDoubleClick={false}><Background variant={BackgroundVariant.Dots} gap={24} size={1} color="#c8c7c0" /><Controls showInteractive={false} position="bottom-left" /></ReactFlow>;
 }
